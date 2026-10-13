@@ -120,6 +120,15 @@ table.mx { border-collapse: separate; border-spacing: 4px; min-width: 860px; wid
 .note .val { font-weight: 600; }
 .note .muted { color: var(--muted); }
 
+/* profile and rules tables */
+table.prof { border-collapse: collapse; width: 100%; min-width: 820px; font-size: 13px; }
+.prof th, .prof td { text-align: left; vertical-align: top; padding: 7px 10px; border-bottom: 1px solid var(--line); }
+.prof thead th { font-size: 12.5px; color: var(--muted); font-weight: 600; }
+.prof tbody th { font-weight: 600; white-space: nowrap; color: var(--ink); }
+.prof td.hl { background: var(--soft); }
+.prof .tag { display: block; font-size: 11px; color: var(--muted); font-weight: 400; }
+table.mx.cmp th.net { font-size: 12.5px; }
+
 /* path diagram */
 .path svg { width: 100%; height: auto; display: block; }
 .path .node rect { fill: var(--soft); stroke: var(--line); }
@@ -178,27 +187,44 @@ footer { color: var(--muted); font-size: 12.5px; padding: 36px 0 48px; border-to
   <div class="crumbs">Experiments / anon-RPC</div>
   <h1>anon-RPC threat map</h1>
   <p class="sub">Who can learn what about a wallet user when its RPC traffic goes through
-    <a href="https://github.com/ethereum/anon-rpc">anon-RPC</a>, by adversary and by transport.
-    Hiding from the RPC provider is one adversary. This page maps the others.</p>
+    <a href="https://github.com/ethereum/anon-rpc">anon-RPC</a>, by adversary and by the anonymity network plugged into it.
+    anon-RPC is a socket: Tor, Nym and Nox workers exist, and each gives different protection. Hiding from the RPC provider is one adversary. This page maps the others, and gives a method to rate any network that plugs in.</p>
   <div class="chips">
-    <span class="chip warn">Draft v0.1</span>
+    <span class="chip warn">Draft v0.2</span>
     <span class="chip">Spec checked: anon-rpc 0.3.2 (2026-09-25)</span>
     <span class="chip" id="updated"></span>
-    <span class="chip">Origin · Content · Timing</span>
+    <span class="chip">Networks: Tor, Nym, Nox</span>
   </div>
 </header>
 
 <p class="verdict" id="verdict"></p>
 
+<section id="networks">
+  <h2>Networks plugged in</h2>
+  <p class="lede">The properties that decide the ratings, for each network with an anon-RPC worker. Direct RPC is the baseline without anon-RPC.</p>
+  <div class="panel mx-scroll"><table class="prof" id="profTable"></table></div>
+</section>
+
+<section id="compare">
+  <h2>Compare networks</h2>
+  <p class="lede">One property, every adversary, every network side by side. Defaults to the end result: can this adversary link the user's IP to an on-chain address? Layers selected in the matrix below apply here too.</p>
+  <div class="panel">
+    <div class="label">Property</div>
+    <div class="seg" id="cmpProps"></div>
+    <div class="mx-scroll"><table class="mx" id="cmp"></table></div>
+    <div class="legend" id="legend2"></div>
+  </div>
+</section>
+
 <section id="matrix">
   <h2>Adversary matrix</h2>
-  <p class="lede">What each adversary can learn under the selected stack. Pick a transport, add layers, and click a cell for the reasoning.
+  <p class="lede">What each adversary can learn under the selected stack. Pick a network, add layers, and click a cell for the reasoning.
     Cells outlined in blue changed when you added a layer. Format borrowed from
     <a href="https://privacybenchmark.org/projects/aztec?tab=matrix">Privacy Benchmark</a> and L2BEAT.</p>
   <div class="panel">
     <div class="builder">
       <div>
-        <div class="label">Transport</div>
+        <div class="label">Network plugged in</div>
         <div class="seg" id="transports"></div>
       </div>
       <div>
@@ -215,14 +241,20 @@ footer { color: var(--muted); font-size: 12.5px; padding: 36px 0 48px; border-to
 
 <section id="path">
   <h2>Where each adversary sits</h2>
-  <p class="lede">The request path for the selected transport. Red markers are vantage points; click one to select that row in the matrix.
+  <p class="lede">The request path for the selected network. Red markers are vantage points; click one to select that row in the matrix.
     Green links are encrypted between those two hops. The dashed outline is an observer who sees every link at once.</p>
   <div class="panel path" id="pathPanel"></div>
 </section>
 
+<section id="rules">
+  <h2>Rating a network that plugs in</h2>
+  <p class="lede">The method behind every rating above. Answer these questions for a new network and the matrix follows. Each answer decides specific cells.</p>
+  <div class="panel mx-scroll"><table class="prof" id="rulesTable"></table></div>
+</section>
+
 <section id="helps">
   <h2>Where anon-RPC helps, and where gaps remain</h2>
-  <p class="lede">For the stack that exists today: anon-RPC with the tor-js worker, clearnet exit or onion service, no PIR, no shaping.</p>
+  <p class="lede">For the workers that exist today (Tor, Nym, Nox), without PIR or shaping.</p>
   <div class="cols">
     <div class="panel ok"><h3>Helps</h3><ul id="helpsList"></ul></div>
     <div class="panel gap"><h3>Gaps</h3><ul id="gapsList"></ul></div>
@@ -278,34 +310,42 @@ footer { color: var(--muted); font-size: 12.5px; padding: 36px 0 48px; border-to
   const $ = (id) => document.getElementById(id);
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
-  const state = { t: "tor", layers: new Set(), sel: null };
+  const state = { t: "tor", layers: new Set(), sel: null, cp: "deanon" };
   try {
     const h = new URLSearchParams(location.hash.slice(1));
-    if (h.get("t") && M.transports.some((x) => x.id === h.get("t"))) state.t = h.get("t");
+    if (h.get("t") && M.networks.some((x) => x.id === h.get("t"))) state.t = h.get("t");
     (h.get("l") || "").split(",").filter((l) => M.layers.some((x) => x.id === l)).forEach((l) => state.layers.add(l));
   } catch (e) {}
+
+  // Look up obj[key][p], where key is the network id, a comma list containing it, or "all" (in that order).
+  function pick(obj, t, p) {
+    if (!obj) return undefined;
+    if (obj[t] && obj[t][p] !== undefined) return obj[t][p];
+    for (const k of Object.keys(obj)) if (k.includes(",") && k.split(",").includes(t) && obj[k][p] !== undefined) return obj[k][p];
+    return obj.all ? obj.all[p] : undefined;
+  }
 
   // Cell value for adversary a, property p under the current stack.
   function cell(a, p, t, layers) {
     const base = a.cells[t];
     const i = M.properties.findIndex((x) => x.id === p);
     let v = base ? base[i] : "N";
-    let note = (a.notes[t] && a.notes[t][p]) || (a.notes.all && a.notes.all[p]) || "";
+    let note = pick(a.notes, t, p) || "";
     let by = null;
     for (const L of M.layers) {
       if (!layers.has(L.id) || !a[L.id]) continue;
-      const o = (a[L.id][t] && a[L.id][t][p]) || (a[L.id].all && a[L.id].all[p]);
+      const o = pick(a[L.id], t, p);
       if (o && v !== "N") { v = o[0]; note = o[1]; by = L.name; }
     }
     return { v, note, by };
   }
 
   function renderControls() {
-    $("transports").innerHTML = M.transports.map((t) =>
+    $("transports").innerHTML = M.networks.map((t) =>
       `<button type="button" data-t="${t.id}" aria-pressed="${t.id === state.t}">${esc(t.name)}${t.tag ? `<span class="tag">${esc(t.tag)}</span>` : ""}</button>`).join("");
     $("layers").innerHTML = M.layers.map((l) =>
       `<button type="button" class="toggle" data-l="${l.id}" aria-pressed="${state.layers.has(l.id)}">+ ${esc(l.name)}<span class="tag">${esc(l.tag)}</span></button>`).join("");
-    const t = M.transports.find((x) => x.id === state.t);
+    const t = M.networks.find((x) => x.id === state.t);
     const ls = M.layers.filter((l) => state.layers.has(l.id));
     $("stackDesc").innerHTML = `<b>${esc(t.name)}.</b> ${esc(t.desc)}` + ls.map((l) => ` <b>+ ${esc(l.name)}.</b> ${esc(l.desc)}`).join("");
   }
@@ -328,6 +368,31 @@ footer { color: var(--muted); font-size: 12.5px; padding: 36px 0 48px; border-to
     $("legend").innerHTML = Object.keys(SYM).map((k) => `<span><span class="k cell ${k}">${SYM[k]}</span>${LBL[k]}</span>`).join("");
   }
 
+  function renderCompare() {
+    $("cmpProps").innerHTML = M.properties.map((p) => `<button type="button" data-cp="${p.id}" aria-pressed="${p.id === state.cp}">${esc(p.name)}</button>`).join("");
+    const p = M.properties.find((x) => x.id === state.cp);
+    let h = `<thead><tr><th class="adv-h">Adversary</th>` + M.networks.map((t) => `<th class="net">${esc(t.name)}<small>${esc(t.tag)}</small></th>`).join("") + `</tr></thead><tbody>`;
+    for (const a of M.adversaries) {
+      h += `<tr><td class="adv" data-a="${a.id}">${esc(a.name)}<span class="where">${esc(a.where)}</span></td>`;
+      for (const t of M.networks) {
+        const c = cell(a, p.id, t.id, state.layers);
+        h += `<td><div class="cell ${c.v}" tabindex="0" role="button" data-ct="${t.id}" data-a="${a.id}" data-p="${p.id}" title="${esc(c.note)}" aria-label="${esc(a.name)}, ${esc(t.name)}: ${LBL[c.v]}">${SYM[c.v]}</div></td>`;
+      }
+      h += `</tr>`;
+    }
+    $("cmp").className = "mx cmp";
+    $("cmp").innerHTML = h + `</tbody>`;
+    $("legend2").innerHTML = $("legend").innerHTML + `<span>Click a cell to open it in the matrix.</span>`;
+  }
+
+  function renderProfiles() {
+    const nets = M.networks;
+    $("profTable").innerHTML = `<thead><tr><th></th>` + nets.map((t) => `<th>${esc(t.name)}<span class="tag">${esc(t.tag)}</span></th>`).join("") + `</tr></thead><tbody>` +
+      M.profileFields.map((f) => `<tr><th>${esc(f.name)}</th>` + nets.map((t) => `<td>${esc(t.profile[f.id] || "")}</td>`).join("") + `</tr>`).join("") + `</tbody>`;
+    $("rulesTable").innerHTML = `<thead><tr><th>Question</th><th>Decides</th><th>Effect</th></tr></thead><tbody>` +
+      M.rules.map((r) => `<tr><th style="white-space:normal">${esc(r.q)}</th><td>${esc(r.decides)}</td><td>${esc(r.effect)}</td></tr>`).join("") + `</tbody>`;
+  }
+
   function renderNote() {
     const s = state.sel;
     if (!s) { $("note").innerHTML = `<span class="muted">Click a cell or an adversary name.</span>`; return; }
@@ -338,14 +403,14 @@ footer { color: var(--muted); font-size: 12.5px; padding: 36px 0 48px; border-to
     }
     const p = M.properties.find((x) => x.id === s.p);
     const c = cell(a, s.p, state.t, state.layers);
-    const t = M.transports.find((x) => x.id === state.t);
+    const t = M.networks.find((x) => x.id === state.t);
     $("note").innerHTML = `<h3>${esc(a.name)} · ${esc(p.name)} · <span class="val">${SYM[c.v]} ${LBL[c.v]}</span></h3>
       <div>${esc(c.note || "No note yet.")}</div>
       <div class="muted" style="margin-top:6px">Stack: ${esc(t.name)}${[...state.layers].map((l) => " + " + esc(M.layers.find((x) => x.id === l).name)).join("")}${c.by ? `. Rating set by the ${esc(c.by)} layer.` : "."}</div>`;
   }
 
   function renderPath() {
-    const t = M.transports.find((x) => x.id === state.t);
+    const t = M.networks.find((x) => x.id === state.t);
     const nodes = t.path, n = nodes.length;
     const W = 1120, H = 262, gap = W / n, bw = Math.min(150, gap - 30), by = 118, bh = 58, ey = 40;
     const advName = (id) => M.adversaries.find((a) => a.id === id).name;
@@ -411,12 +476,14 @@ footer { color: var(--muted); font-size: 12.5px; padding: 36px 0 48px; border-to
 
   function sync() {
     try { history.replaceState(null, "", "#t=" + state.t + (state.layers.size ? "&l=" + [...state.layers].join(",") : "")); } catch (e) {}
-    renderControls(); renderMatrix(); renderNote(); renderPath();
+    renderControls(); renderMatrix(); renderNote(); renderPath(); renderCompare();
   }
 
   document.addEventListener("click", (ev) => {
     const tb = ev.target.closest("[data-t]"); if (tb) { state.t = tb.dataset.t; return sync(); }
     const lb = ev.target.closest("[data-l]"); if (lb) { const l = lb.dataset.l; state.layers.has(l) ? state.layers.delete(l) : state.layers.add(l); return sync(); }
+    const cp = ev.target.closest("[data-cp]"); if (cp) { state.cp = cp.dataset.cp; return sync(); }
+    const cc = ev.target.closest(".cell[data-ct]"); if (cc) { state.t = cc.dataset.ct; state.sel = { a: cc.dataset.a, p: cc.dataset.p }; sync(); $("matrix").scrollIntoView({ behavior: "smooth" }); return; }
     const c = ev.target.closest(".cell[data-p]"); if (c) { state.sel = { a: c.dataset.a, p: c.dataset.p }; return sync(); }
     const a = ev.target.closest("td.adv, .eye"); if (a) {
       state.sel = { a: a.dataset.a, p: null }; sync();
@@ -428,7 +495,7 @@ footer { color: var(--muted); font-size: 12.5px; padding: 36px 0 48px; border-to
   document.addEventListener("keydown", (ev) => { if ((ev.key === "Enter" || ev.key === " ") && ev.target.classList.contains("cell")) { ev.preventDefault(); ev.target.click(); } });
   try { const v = localStorage.getItem("theme"); if (v) document.documentElement.setAttribute("data-theme", v); } catch (e) {}
 
-  renderStatic(); sync();
+  renderStatic(); renderProfiles(); sync();
 })();
 </script>
 </body>
